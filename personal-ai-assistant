@@ -1,0 +1,196 @@
+# personal_ai_assistant.py
+# Your Own Personalized AI Assistant
+# Replace "YOUR_API_KEY" with your actual API key
+
+import os
+import json
+import datetime
+import hashlib
+from typing import List, Dict, Any
+
+class PersonalAIAssistant:
+    def __init__(self, api_key=None, use_local_model=False):
+        """
+        Initialize your AI assistant.
+        For local model: uses Ollama, For OpenAI: uses GPT
+        """
+        self.conversation_history = []
+        self.memory = []
+        self.use_local_model = use_local_model
+        
+        if use_local_model:
+            # Use free local model (requires Ollama installed)
+            try:
+                import requests
+                self.ollama_available = True
+            except:
+                print("⚠️ Install requests: pip install requests")
+                self.ollama_available = False
+        else:
+            # Use OpenAI
+            try:
+                import openai
+                self.openai = openai
+                self.openai.api_key = api_key or os.getenv("OPENAI_API_KEY")
+                if not self.openai.api_key:
+                    raise ValueError("OpenAI API key required")
+            except ImportError:
+                print("⚠️ Install OpenAI: pip install openai")
+                raise
+    
+    def add_to_memory(self, key: str, value: str):
+        """Store important information in memory"""
+        self.memory.append({
+            "key": key,
+            "value": value,
+            "timestamp": datetime.datetime.now().isoformat()
+        })
+        self.save_memory()
+    
+    def save_memory(self):
+        """Save memory to file"""
+        with open("assistant_memory.json", "w") as f:
+            json.dump(self.memory, f, indent=2)
+    
+    def load_memory(self):
+        """Load memory from file"""
+        if os.path.exists("assistant_memory.json"):
+            with open("assistant_memory.json", "r") as f:
+                self.memory = json.load(f)
+    
+    def get_context(self) -> str:
+        """Get context from memory"""
+        context = "Previous memories:\n"
+        for mem in self.memory[-5:]:  # Last 5 memories
+            context += f"- {mem['key']}: {mem['value']}\n"
+        return context
+    
+    def respond(self, user_input: str) -> str:
+        """Get response from AI"""
+        self.conversation_history.append({
+            "role": "user",
+            "content": user_input,
+            "timestamp": datetime.datetime.now().isoformat()
+        })
+        
+        system_prompt = f"""You are a helpful AI assistant. Current time: {datetime.datetime.now()}
+{self.get_context()}
+Be concise but thorough. Remember past conversations."""
+        
+        if self.use_local_model and self.ollama_available:
+            return self._ollama_response(system_prompt, user_input)
+        else:
+            return self._openai_response(system_prompt, user_input)
+    
+    def _openai_response(self, system_prompt: str, user_input: str) -> str:
+        """Get response from OpenAI"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *[{"role": m["role"], "content": m["content"]} 
+              for m in self.conversation_history[-10:]]
+        ]
+        
+        try:
+            response = self.openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7
+            )
+            reply = response.choices[0].message.content
+            
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": reply,
+                "timestamp": datetime.datetime.now().isoformat()
+            })
+            return reply
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    def _ollama_response(self, system_prompt: str, user_input: str) -> str:
+        """Get response from local Ollama model"""
+        import requests
+        
+        full_prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant:"
+        
+        try:
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "llama2",
+                    "prompt": full_prompt,
+                    "stream": False
+                }
+            )
+            reply = response.json()["response"]
+            
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": reply,
+                "timestamp": datetime.datetime.now().isoformat()
+            })
+            return reply
+        except:
+            return "Ollama not running. Run 'ollama run llama2' first."
+    
+    def chat_loop(self):
+        """Interactive chat loop"""
+        print("\n🤖 Your Personal AI Assistant")
+        print("Type 'exit' to quit, 'memory' to see memories, 'forget' to clear")
+        print("-" * 50)
+        
+        self.load_memory()
+        
+        while True:
+            user_input = input("\nYou: ").strip()
+            
+            if user_input.lower() == 'exit':
+                print("Goodbye! 👋")
+                break
+            elif user_input.lower() == 'memory':
+                print("\n📝 Memory:")
+                for mem in self.memory:
+                    print(f"  • {mem['key']}: {mem['value']}")
+                continue
+            elif user_input.lower() == 'forget':
+                self.memory = []
+                self.save_memory()
+                print("Memory cleared!")
+                continue
+            elif user_input.lower() == 'history':
+                print("\n💬 Conversation History:")
+                for msg in self.conversation_history[-10:]:
+                    role = "👤" if msg["role"] == "user" else "🤖"
+                    print(f"{role} {msg['content'][:100]}...")
+                continue
+            
+            # Get response
+            response = self.respond(user_input)
+            print(f"\n🤖 Assistant: {response}")
+            
+            # Ask if wants to remember something
+            if len(user_input.split()) > 10:  # Long messages might have important info
+                remember = input("\n💾 Should I remember this? (yes/no): ").strip().lower()
+                if remember == 'yes':
+                    key = input("What should I call this memory? ").strip()
+                    self.add_to_memory(key, user_input[:200])
+
+# Main execution
+if __name__ == "__main__":
+    # Option 1: Use OpenAI (requires API key)
+    USE_OPENAI = False  # Set to True for OpenAI
+    
+    if USE_OPENAI:
+        API_KEY = "your-openai-api-key-here"  # Replace with your key
+        assistant = PersonalAIAssistant(api_key=API_KEY, use_local_model=False)
+    else:
+        # Option 2: Use local model (recommended, free)
+        print("Using local Ollama model...")
+        print("If not installed, run:")
+        print("  curl -fsSL https://ollama.ai/install.sh | sh")
+        print("  ollama pull llama2")
+        assistant = PersonalAIAssistant(use_local_model=True)
+    
+    # Start chatting
+    assistant.chat_loop()
